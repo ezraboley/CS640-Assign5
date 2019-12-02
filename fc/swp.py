@@ -51,20 +51,22 @@ class SWPPacket:
 class SWPSender:
     _SEND_WINDOW_SIZE = 5
     _TIMEOUT = 1
-    _LOCK = None
+    _WINDOW_LOCK = None
+    _seqNum = 0
+    _sendBuff = []
+    _BUFF_LOCK = None
 
     def __init__(self, remote_address, loss_probability=0):
         self._llp_endpoint = llp.LLPEndpoint(remote_address=remote_address,
                 loss_probability=loss_probability)
 
-        self._LOCK = threading.Lock()
-
+        self._WINDOW_LOCK = threading.BoundedSemaphore(value=self._SEND_WINDOW_SIZE)
+        self._BUFF_LOCK = threading.Semaphore()
         # Start receive thread
         self._recv_thread = threading.Thread(target=self._recv)
         self._recv_thread.start()
-        
-        # TODO: Add additional state variables
 
+        # TODO: Add additional state variables
 
     def send(self, data):
         for i in range(0, len(data), SWPPacket.MAX_DATA_SIZE):
@@ -72,10 +74,27 @@ class SWPSender:
 
     def _send(self, data):
         # TODO
-        if self.
+        self._WINDOW_LOCK.acquire()
+        packet = SWPPacket(type=SWPType.DATA, seq_num=self._seqNum, data=data)
+        self._seqNum += 1
+        self.enqueue(data)
+        logging.debug("Sending: %s" % packet)
+        self._llp_endpoint.send(packet.to_bytes())
 
         return
-        
+
+    def enqueue(self, data):
+        with self._BUFF_LOCK:
+            self._sendBuff.append(data)
+            logging.debug("Data enqueued, new window contents: %s" % self._sendBuff)
+
+    def dequeue(self):
+        with self._BUFF_LOCK:
+            data = self._sendBuff[0]
+            del _sendBuff[0]
+            logging.debug("Data dequeued, New window contents: %s" % self._sendBuff)
+        return data
+
     def _retransmit(self, seq_num):
         # TODO
 
@@ -89,9 +108,13 @@ class SWPSender:
                 continue
             packet = SWPPacket.from_bytes(raw)
             logging.debug("Received: %s" % packet)
-
+            
             # TODO
-
+            self.dequeue()
+            try:
+                self._WINDOW_LOCK.release()
+            except ValueError:
+                logging.debug("Window is oversized")
         return
 
 class SWPReceiver:
