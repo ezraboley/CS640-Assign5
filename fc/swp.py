@@ -54,50 +54,68 @@ class SWPSender:
     _WINDOW_LOCK = None
     _seqNum = 0
     _sendBuff = []
+    _SEQ_NUM_LOCK = None
     _BUFF_LOCK = None
 
     def __init__(self, remote_address, loss_probability=0):
         self._llp_endpoint = llp.LLPEndpoint(remote_address=remote_address,
                 loss_probability=loss_probability)
 
+        # A variety of locks and semaphores for maintaining window size, and
+        # packet ordering
         self._WINDOW_LOCK = threading.BoundedSemaphore(value=self._SEND_WINDOW_SIZE)
         self._BUFF_LOCK = threading.Semaphore()
+        self._SEQ_NUM_LOCK = threading.Semaphore()
+        
         # Start receive thread
         self._recv_thread = threading.Thread(target=self._recv)
         self._recv_thread.start()
 
-        # TODO: Add additional state variables
+        # Create the actual window
+        self._sendBuff = [None] * self._SEND_WINDOW_SIZE
 
     def send(self, data):
         for i in range(0, len(data), SWPPacket.MAX_DATA_SIZE):
             self._send(data[i:i+SWPPacket.MAX_DATA_SIZE])
 
     def _send(self, data):
-        # TODO
+        # TODO - Should be DONE
         self._WINDOW_LOCK.acquire()
-        packet = SWPPacket(type=SWPType.DATA, seq_num=self._seqNum, data=data)
-        self._seqNum += 1
-        self.enqueue(data)
-        logging.debug("Sending: %s" % packet)
-        self._llp_endpoint.send(packet.to_bytes())
-
+        with self._SEQ_NUM_LOCK:
+            packet = SWPPacket(type=SWPType.DATA, seq_num=self._seqNum, data=data)
+            timer = threading.Timer(self._TIMEOUT, self._retransmit, args=[self._seqNum])
+            self._enqueue(self._seqNum, packet)
+            logging.debug("Sending: %s" % packet)
+            self._llp_endpoint.send(packet.to_bytes())
+            self._seqNum += 1
+            timer.start()
         return
 
-    def enqueue(self, data):
+    def _enqueue(self, seqNum, data):
         with self._BUFF_LOCK:
-            self._sendBuff.append(data)
+            self._sendBuff[seqNum % self._SEND_WINDOW_SIZE] = data
             logging.debug("Data enqueued, new window contents: %s" % self._sendBuff)
 
-    def dequeue(self):
+    def _dequeue(self):
+        data = None
         with self._BUFF_LOCK:
             data = self._sendBuff[0]
-            del _sendBuff[0]
+            del self._sendBuff[0]   # Shouldnt be deleting!
             logging.debug("Data dequeued, New window contents: %s" % self._sendBuff)
         return data
 
-    def _retransmit(self, seq_num):
-        # TODO
+    def _get(self, seqNum):
+        data = None
+        with self._BUFF_LOCK:
+            data = self._sendBuff[seqNum % self._SEND_WINDOW_SIZE]
+        return data
 
+    def _retransmit(self, seq_num):
+        # TODO - Should be DONE
+        packet = self._get(seq_num)
+        timer = threading.Timer(self._TIMEOUT, self._retransmit, args=[seq_num])
+        self._llp_endpoint.send(packet.to_bytes())
+        timer.start()
         return 
 
     def _recv(self):
@@ -108,9 +126,11 @@ class SWPSender:
                 continue
             packet = SWPPacket.from_bytes(raw)
             logging.debug("Received: %s" % packet)
-            
-            # TODO
-            self.dequeue()
+            # We only care about ACKs on this guy
+            if packet.type != SWPType.ACK: 
+                continue
+            # TODO - Untested
+            self._dequeue()
             try:
                 self._WINDOW_LOCK.release()
             except ValueError:
@@ -119,6 +139,9 @@ class SWPSender:
 
 class SWPReceiver:
     _RECV_WINDOW_SIZE = 5
+    _maxSeqNum = 0
+    _MAX_SEQ_LOCK = None
+    #_RECV_LOCK = None
 
     def __init__(self, local_address, loss_probability=0):
         self._llp_endpoint = llp.LLPEndpoint(local_address=local_address, 
@@ -127,12 +150,14 @@ class SWPReceiver:
         # Received data waiting for application to consume
         self._ready_data = queue.Queue()
 
+        self._MAX_SEQ_LOCK = threading.Semaphore()
+        self._RECV_LOCK = threading.Semaphore()
         # Start receive thread
         self._recv_thread = threading.Thread(target=self._recv)
         self._recv_thread.start()
         
         # TODO: Add additional state variables
-
+        
 
     def recv(self):
         return self._ready_data.get()
@@ -140,10 +165,27 @@ class SWPReceiver:
     def _recv(self):
         while True:
             # Receive data packet
-            raw = self._llp_endpoint.recv()
-            packet = SWPPacket.from_bytes(raw)
-            logging.debug("Received: %s" % packet)
+            with self._RECV_LOCK:
+                raw = self._llp_endpoint.recv()
+                packet = SWPPacket.from_bytes(raw)
+                logging.debug("Received: %s" % packet)
             
+                self._setMaxSeqNum(packet.seq_num)
+                seqNum = self._getMaxSeqNum()
+                ackPack = SWPPacket(type=SWPType.ACK, seq_num=seqNum, data=raw)
+                self._llp_endpoint.send(ackPack.to_bytes())  
             # TODO
 
         return
+
+    def _getMaxSeqNum(self):
+        seqNum = -1
+        with self._MAX_SEQ_LOCK:
+            seqNum = self._maxSeqNum
+        return seqNum
+    
+    def _setMaxSeqNum(self, seqNum):
+        with self._MAX_SEQ_LOCK:
+            self._maxSeqNum = max(self._maxSeqNum, seqNum)
+        
+
