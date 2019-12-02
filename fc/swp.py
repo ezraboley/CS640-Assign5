@@ -100,7 +100,7 @@ class SWPSender:
         data = None
         with self._BUFF_LOCK:
             data = self._sendBuff[0]
-            del self._sendBuff[0]   # Shouldnt be deleting!
+            del self._sendBuff[0]   # FIXME Shouldnt be deleting!
             logging.debug("Data dequeued, New window contents: %s" % self._sendBuff)
         return data
 
@@ -129,7 +129,8 @@ class SWPSender:
             # We only care about ACKs on this guy
             if packet.type != SWPType.ACK: 
                 continue
-            # TODO - Untested
+            # TODO - FIXME, need to cancel a timer, also need to know which byte
+            # to resend
             self._dequeue()
             try:
                 self._WINDOW_LOCK.release()
