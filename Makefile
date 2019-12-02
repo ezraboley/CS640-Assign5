@@ -8,5 +8,6 @@ HOST := "localhost"
 
 testPy:
 	@echo "Type in text to send with python client!"
+	$(PY) fc/server.py -p $(PORT) &
 	$(PY) fc/client.py -p $(PORT) -h $(HOST)
 
