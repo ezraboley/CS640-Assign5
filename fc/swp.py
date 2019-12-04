@@ -96,11 +96,11 @@ class SWPSender:
             self._sendBuff[seqNum % self._SEND_WINDOW_SIZE] = data
             logging.debug("Data enqueued, new window contents: %s" % self._sendBuff)
 
-    def _dequeue(self):
+    def _remove(self, seqNum):
         data = None
         with self._BUFF_LOCK:
-            data = self._sendBuff[0]
-            del self._sendBuff[0]   # FIXME Shouldnt be deleting!
+            data = self._sendBuff[seqNum % self._SEND_WINDOW_SIZE]
+            self._sendBuff[seqNum % self._SEND_WINDOW_SIZE] = None  # FIXME Shouldnt be deleting!
             logging.debug("Data dequeued, New window contents: %s" % self._sendBuff)
         return data
 
@@ -113,6 +113,9 @@ class SWPSender:
     def _retransmit(self, seq_num):
         # TODO - Should be DONE
         packet = self._get(seq_num)
+        if packet == None or packet.seq_num != seq_num:
+            return # Means that we shouldn't actually retransmit
+
         timer = threading.Timer(self._TIMEOUT, self._retransmit, args=[seq_num])
         self._llp_endpoint.send(packet.to_bytes())
         timer.start()
@@ -131,7 +134,7 @@ class SWPSender:
                 continue
             # TODO - FIXME, need to cancel a timer, also need to know which byte
             # to resend
-            self._dequeue()
+            self._remove(packet.seq_num)
             try:
                 self._WINDOW_LOCK.release()
             except ValueError:
