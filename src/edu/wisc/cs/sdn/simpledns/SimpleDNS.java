@@ -2,6 +2,7 @@ package edu.wisc.cs.sdn.simpledns;
 
 import edu.wisc.cs.sdn.simpledns.packet.DNS;
 import edu.wisc.cs.sdn.simpledns.packet.DNSQuestion;
+import edu.wisc.cs.sdn.simpledns.packet.DNSResourceRecord;
 
 import java.io.IOException;
 import java.net.*;
@@ -18,6 +19,7 @@ public class SimpleDNS {
             while (true) {
                 IncomingPacketInfo incomingInfo = receiveInitPacket(socket, serverArgs);
                 DNS resultingDns = handleQuestions(incomingInfo.dnsInfo, serverArgs);
+                resultingDns.setId(incomingInfo.dnsInfo.getId());
                 replyToClient(resultingDns, incomingInfo.srcIp, incomingInfo.srcPort, socket);
             }
         } catch (IOException e) {
@@ -68,7 +70,7 @@ public class SimpleDNS {
         DatagramPacket pk = new DatagramPacket(buff, buff.length);
         System.out.println("Waiting for packet!");
         socket.receive(pk);
-        System.out.println("Packet Received! + " + Arrays.toString(pk.getData()));
+//        System.out.println("Packet Received! + " + Arrays.toString(pk.getData()));
         DNS dns = DNS.deserialize(pk.getData(), pk.getLength());
         System.out.println("DNS info: " + dns);
         if (dns.getOpcode() == DNS.OPCODE_STANDARD_QUERY) {
@@ -125,7 +127,9 @@ public class SimpleDNS {
 //            DNS retDns = new DNS();
 //            retDns.
             try {
-                return queryDNSServer(q.getName(), serverArgs.rootSvrIp, dnsResolutionSocket, dnsPort);
+                DNS retDns = queryDNSServer(q.getName(), serverArgs.rootSvrIp, dnsResolutionSocket, dnsPort, dns);
+                dnsResolutionSocket.close();
+                return retDns;
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -134,44 +138,41 @@ public class SimpleDNS {
         throw new RuntimeException("No questions, this shouldn't happen");
     }
 
-    private static DNS queryDNSServer(final String name, final String rootSvrIp, DatagramSocket socket, int dnsPort) throws IOException {
+    private static DNS queryDNSServer(final String name, final String rootSvrIp, DatagramSocket socket, int dnsPort, DNS originalDns) throws IOException {
 //            how are you issuing dns requests? are you using sockets or tcp connections or dig commands?
         byte[] buff = new byte[2048]; // what size should this be?
         DatagramPacket pk = new DatagramPacket(buff, buff.length);
-        sendDNSRequestWithTimeout(name, rootSvrIp, socket, dnsPort);
+//        sendDNSRequestWithTimeout(name, rootSvrIp, socket, dnsPort, originalDns);
+        sendDNSRequest(generateDNSForRequest(name, originalDns), rootSvrIp, dnsPort, socket);
         System.out.println("Waiting for packet!");
         socket.receive(pk);
-        System.out.println("Packet Received! + " + Arrays.toString(pk.getData()));
+//        System.out.println("Packet Received! + " + Arrays.toString(pk.getData()));
         DNS dns = DNS.deserialize(pk.getData(), pk.getLength());
         System.out.println("DNS info: " + dns);
         return dns;
     }
 
-    private static void sendDNSRequestWithTimeout(final String name, final String svrIp, final DatagramSocket socket, final int dnsPort) throws IOException {
-        Thread requestThread = new Thread(new Runnable() {
-            public void run() {
-                try {
-                    Thread.sleep(1000);
-                    System.out.println("Timeout complete");
-                } catch (Exception e) {
-                    System.err.println(e.getMessage());
-                }
-                try {
-                    sendDNSRequest(generateDNSForRequest(name), svrIp, dnsPort, socket);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-        });
-        requestThread.start();
-        System.out.println("Thread started");
-    }
+//    private static void sendDNSRequestWithTimeout(final String name, final String svrIp, final DatagramSocket socket, final int dnsPort, final DNS originalDns) throws IOException {
+//        Thread requestThread = new Thread(new Runnable() {
+//            public void run() {
+//                try {
+////                    sendDNSRequest(generateDNSForRequest(name, originalDns), svrIp, dnsPort, socket);
+//                } catch (IOException e) {
+//                    e.printStackTrace();
+//                }
+//            }
+//        });
+//        requestThread.start();
+//        System.out.println("Thread started");
+//    }
 
-    private static DNS generateDNSForRequest(String name) {
+    private static DNS generateDNSForRequest(String name, DNS originalDns) {
         DNS dns = new DNS();
+        dns.setId(originalDns.getId());
         dns.setQuery(true);
         dns.setAuthenicated(true);
         dns.setQuestions(new ArrayList<DNSQuestion>(Arrays.asList(new DNSQuestion(name, DNS.TYPE_A)))); // maybe change type
+        dns.setAdditional(new ArrayList<DNSResourceRecord>(originalDns.getAdditional()));
         return dns;
     }
 
