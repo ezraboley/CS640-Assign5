@@ -169,7 +169,6 @@ public class SimpleDNS {
 
     private static DNS generateDNSForRequest(String name) {
         DNS dns = new DNS();
-        dns.setId((short) -1);
         dns.setQuery(true);
         dns.setAuthenicated(true);
         dns.setQuestions(new ArrayList<DNSQuestion>(Arrays.asList(new DNSQuestion(name, DNS.TYPE_A)))); // maybe change type
