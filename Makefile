@@ -12,8 +12,8 @@ testPy: cleanUp clientServer
 
 clientServer:
 	@echo "Type in text to send with python client!"
-	$(PY) fc/server.py -p $(PORT) &
-	$(PY) fc/client.py -p $(PORT) -h $(HOST) -l .1
+	$(PY) fc/server.py -p $(PORT) -l .5 &
+	$(PY) fc/client.py -p $(PORT) -h $(HOST) -l .5
 
 # You can run this if the port hasn't been given up
 cleanUp:
