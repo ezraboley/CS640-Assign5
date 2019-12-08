@@ -127,7 +127,14 @@ public class SimpleDNS {
 //            DNS retDns = new DNS();
 //            retDns.
             try {
-                DNS retDns = queryDNSServer(q.getName(), serverArgs.rootSvrIp, dnsResolutionSocket, dnsPort, dns);
+                DNS retDns;
+                if (dns.isRecursionDesired()) {
+                    System.out.println("Recursive search");
+                    retDns = recurQueryDNSServer(q.getName(), serverArgs.rootSvrIp, dnsResolutionSocket, dnsPort, dns);
+                } else {
+                    System.out.println("non recursive search");
+                    retDns = queryDNSServer(q.getName(), serverArgs.rootSvrIp, dnsResolutionSocket, dnsPort, dns);
+                }
                 dnsResolutionSocket.close();
                 return retDns;
             } catch (IOException e) {
@@ -136,6 +143,19 @@ public class SimpleDNS {
 
         }
         throw new RuntimeException("No questions, this shouldn't happen");
+    }
+
+    private static DNS recurQueryDNSServer(String name, String svrIp, DatagramSocket dnsResolutionSocket, int dnsPort, DNS dns) throws IOException {
+        DNS lookedUpDns = queryDNSServer(name, svrIp, dnsResolutionSocket, dnsPort, dns);
+        if (lookedUpDns.getAnswers().size() > 0) {
+            return lookedUpDns;
+        } else {
+//            for (DNSResourceRecord rr : lookedUpDns.getAuthorities()) {
+//                recurQueryDNSServer(rr.getName(), svrIp, dnsResolutionSocket, dnsPort, dns);
+//            }
+            // FIXME this only looks up the first resource record
+            return recurQueryDNSServer(name, lookedUpDns.getAuthorities().iterator().next().getData().toString(), dnsResolutionSocket, dnsPort, dns);
+        }
     }
 
     private static DNS queryDNSServer(final String name, final String rootSvrIp, DatagramSocket socket, int dnsPort, DNS originalDns) throws IOException {
@@ -182,7 +202,7 @@ public class SimpleDNS {
         DatagramPacket packet = new DatagramPacket(
                 buffer, buffer.length, receiverAddress, dnsPort); // what port?
         System.out.println("Sent DNS request packet");
-            socket.send(packet);
+        socket.send(packet);
     }
 
 //    private static DatagramPacket recQueryDNSServer() {
