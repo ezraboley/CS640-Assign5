@@ -3,6 +3,7 @@
 PY := "python3"		# Pretty sure we want python3 (because python2.7 is dumb)
 PORT := 7777
 HOST := "localhost"
+LOSS := 0.00
 
 .PHONY: testPy clientServer cleanUp
 
@@ -12,8 +13,14 @@ testPy: cleanUp clientServer
 
 clientServer:
 	@echo "Type in text to send with python client!"
-	$(PY) fc/server.py -p $(PORT) -l .5 &
-	$(PY) fc/client.py -p $(PORT) -h $(HOST) -l .5
+	$(PY) fc/server.py -p $(PORT) -l .5 & 
+	cat fc/swp.py | $(PY) fc/client.py -p $(PORT) -h $(HOST) -l $(LOSS)
+
+client:
+	cat fc/swp.py | $(PY) fc/client.py -p $(PORT) -h $(HOST) -l $(LOSS)
+
+server:
+	$(PY) fc/server.py -p $(PORT) -l $(LOSS) 1> output.txt
 
 # You can run this if the port hasn't been given up
 cleanUp:

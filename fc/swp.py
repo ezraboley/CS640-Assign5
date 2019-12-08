@@ -163,6 +163,7 @@ class SWPReceiver:
         self._MAX_SEQ_LOCK = threading.Semaphore()
         self._RECV_LOCK = threading.Semaphore()
         self._RECV_BUFF_LOCK = threading.Semaphore()
+        self._WINDOW_LOCK = threading.BoundedSemaphore(value=self._RECV_WINDOW_SIZE)
         # Start receive thread
     
         self._recv_thread = threading.Thread(target=self._recv)
@@ -172,61 +173,69 @@ class SWPReceiver:
         
 
     def recv(self):
-        return self._ready_data.get()
+        data = self._ready_data.get()
+        try:
+            self._WINDOW_LOCK.release()
+        except ValueError:
+            logging.error("recv Window too big")
+        return data
 
     def _recv(self):
         while True:
             # Receive data packet
-            with self._RECV_LOCK:
-                raw = self._llp_endpoint.recv()
-                packet = SWPPacket.from_bytes(raw)
-                logging.debug("SWPReceiver Received: %s" % packet)
-            
-                # Outside our window
-                if packet.seq_num > self._largestAcptFrame:
-                    continue
+            self._WINDOW_LOCK.acquire()
+            raw = self._llp_endpoint.recv()
+            packet = SWPPacket.from_bytes(raw)
+            logging.debug("SWPReceiver Received: %s" % packet)
+        
+        # Outside our window
+            if packet.seq_num > self._largestAcptFrame:
+                try:
+                    self._WINDOW_LOCK.release()
+                except ValueError:
+                    logging.error("RECV window too big")
+                continue
                 
-                if packet.seq_num <= self._lastFrameRecvd:
-                    self._sendAck(raw)
-                    continue
-
-                self._add(packet)
-
-                seqNum = self._computeMaxSeqNum(packet.seq_num)
-                # Ack for most recent packet
+            if packet.seq_num <= self._lastFrameRecvd:
                 self._sendAck(raw)
-                self._lastFrameRecvd = seqNum
-                self._largestAcptFrame = self._lastFrameRecvd + self._RECV_WINDOW_SIZE
-                # TODO
+                try:
+                    self._WINDOW_LOCK.release()
+                except ValueError:
+                    logging.error("RECV window too big")
+                continue
+            self._add(packet)
+
+            seqNum = self._computeMaxSeqNum(packet.seq_num)
+        # Ack for most recent packet
+            self._sendAck(raw)
+            self._lastFrameRecvd = seqNum
+            self._largestAcptFrame = self._lastFrameRecvd + self._RECV_WINDOW_SIZE
+        # TODO
 
         return
     
     def _sendAck(self, raw):
+        logging.error("MAX SEQ: %s" % self._maxSeqNum)
         ackPack = SWPPacket(type=SWPType.ACK, seq_num=self._maxSeqNum, data=raw)
         self._llp_endpoint.send(ackPack.to_bytes())  
 
     def _add(self, data):
-        with self._RECV_BUFF_LOCK:
-            seqNum = data.seq_num
-            self._recvBuff[seqNum % self._RECV_WINDOW_SIZE] = data
+        self._RECV_BUFF_LOCK.acquire()
+        self._recvBuff[data.seq_num % self._RECV_WINDOW_SIZE] = data
 
     def _computeMaxSeqNum(self, seqNum):
-        with self._RECV_BUFF_LOCK:
-            for i in range(self._lastFrameRecvd + 1, self._largestAcptFrame + 1):
-                # Traverse the buffer and look for holes
-                if self._recvBuff[i % self._RECV_WINDOW_SIZE] is None:
-                    # We need to ack the last complete packet before None
-                    newMax = i - 1
-                    break
-                else:
-                    self._ready_data.put(self._recvBuff[i % self._RECV_WINDOW_SIZE].to_bytes())
-                    self._recvBuff[i % self._RECV_WINDOW_SIZE] = None
-            self._maxSeqNum = newMax        
+        #with self._RECV_BUFF_LOCK:
+        for i in range(self._lastFrameRecvd + 1, self._largestAcptFrame + 1):
+            # Traverse the buffer and look for holes
+            if self._recvBuff[i % self._RECV_WINDOW_SIZE] is None:
+            # We need to ack the last complete packet before None
+                self._maxSeqNum = i - 1
+                break
+            else:
+                self._ready_data.put(self._recvBuff[i % self._RECV_WINDOW_SIZE].to_bytes())
+                self._recvBuff[i % self._RECV_WINDOW_SIZE] = None
+            #self._maxSeqNum = newMax      
+        self._RECV_BUFF_LOCK.release()
         logging.debug("New Max Sequence Number: %s" % self._maxSeqNum)
         return self._maxSeqNum
     
-    def _setMaxSeqNum(self, seqNum):
-        with self._MAX_SEQ_LOCK:
-            self._maxSeqNum = max(self._maxSeqNum, seqNum)
-        
-
