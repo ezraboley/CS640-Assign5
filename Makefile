@@ -3,7 +3,7 @@
 PY := "python3"		# Pretty sure we want python3 (because python2.7 is dumb)
 PORT := 7777
 HOST := "localhost"
-LOSS := 0.00
+LOSS := 0.1
 
 .PHONY: testPy clientServer cleanUp
 
