@@ -178,7 +178,12 @@ public class SimpleDNS {
             return lookedUpDns;
         } else {
             for (DNSResourceRecord rr : lookedUpDns.getAuthorities()) {
-                return recurQueryDNSServer(originalQuestion, rr.getData().toString(), dnsResolutionSocket, dnsPort, dns, q_type, ec2Map, serverArgs);
+                try {
+                    return recurQueryDNSServer(originalQuestion, rr.getData().toString(), dnsResolutionSocket, dnsPort, dns, q_type, ec2Map, serverArgs);
+                } catch (RuntimeException e) {
+                    System.out.println("NS fallback");
+                    continue;
+                }
             }
             // FIXME what to do if there is no authorities and no
             throw new RuntimeException("No answers and no authority, what do I do");
@@ -198,10 +203,13 @@ public class SimpleDNS {
     private static DNSResourceRecord generateTextEc2RR(String ip, String location) {
 //        DNSResourceRecord retRecord = new DNSResourceRecord();
 //        retRecord.setName();
+
         return null;
     }
 
-    private static List<DNSResourceRecord> resolveCNAMEs(DNSQuestion originalQuestion, DNS lookedUpDns, String svrIp, DatagramSocket dnsResolutionSocket, int dnsPort, DNS dns, short q_type, Map<String, String> ec2File, ServerArgs serverArgs) throws IOException {
+    private static List<DNSResourceRecord> resolveCNAMEs(DNSQuestion originalQuestion, DNS lookedUpDns, String svrIp,
+                                                         DatagramSocket dnsResolutionSocket, int dnsPort, DNS dns,
+                                                         short q_type, Map<String, String> ec2File, ServerArgs serverArgs) throws IOException {
 //        then you should recursively resolve the CNAME to obtain an A or AAAA record for the CNAME
         List<DNSResourceRecord> rrResults = new ArrayList<DNSResourceRecord>();
         for (DNSResourceRecord rr : lookedUpDns.getAnswers()) {
@@ -219,7 +227,8 @@ public class SimpleDNS {
         return rrResults;
     }
 
-    private static DNS queryDNSServer(final DNSQuestion originalQuestion, final String rootSvrIp, DatagramSocket socket, int dnsPort, DNS originalDns) throws IOException {
+    private static DNS queryDNSServer(final DNSQuestion originalQuestion, final String rootSvrIp, DatagramSocket socket,
+                                      int dnsPort, DNS originalDns) throws IOException {
 //            how are you issuing dns requests? are you using sockets or tcp connections or dig commands?
         byte[] buff = new byte[1518]; // what size should this be?
         DatagramPacket pk = new DatagramPacket(buff, buff.length);
