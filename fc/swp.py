@@ -86,7 +86,7 @@ class SWPSender:
         # TODO - Should be DONE
         self._WINDOW_LOCK.acquire()
         with self._SEQ_NUM_LOCK:
-            packet = SWPPacket(type=SWPType.DATA, seq_num=self._seqNum, data=data)
+            packet = SWPPacket(type=SWPType.DATA, seq_num=(self._seqNum), data=data)
             timer = threading.Timer(self._TIMEOUT, self._retransmit, args=[self._seqNum])
             self._enqueue(self._seqNum, packet)
             logging.debug("Sending: %s" % packet)
@@ -102,6 +102,7 @@ class SWPSender:
 
     def _remove(self, seqNum):
         with self._BUFF_LOCK:
+            logging.debug("SEQ NUM OF ACK! %s" % seqNum)
             for i in range(self._lastAckRecv + 1, seqNum + 1):
                 # Traverse the buffer and look for holes
                 self._sendBuff[i % self._SEND_WINDOW_SIZE] = None
@@ -116,7 +117,9 @@ class SWPSender:
     def _retransmit(self, seq_num):
         # TODO - Should be DONE
         packet = self._get(seq_num)
-        if packet == None or packet.seq_num != seq_num:
+        if packet == None:
+            logging.debug("We are stuck here: seq_num: %s" % seq_num)
+            #logging.debug("Packet: %s" % packet.seq_num)
             return # Means that we shouldn't actually retransmit
         
         timer = threading.Timer(self._TIMEOUT, self._retransmit, args=[seq_num])
@@ -196,6 +199,7 @@ class SWPReceiver:
                     logging.error("RECV window too big")
                 continue
                 
+          
             if packet.seq_num <= self._lastFrameRecvd:
                 self._sendAck(raw)
                 try:
@@ -208,7 +212,9 @@ class SWPReceiver:
             seqNum = self._computeMaxSeqNum(packet.seq_num)
         # Ack for most recent packet
             self._sendAck(raw)
-            self._lastFrameRecvd = seqNum
+            
+            self._lastFrameRecvd = seqNum 
+            
             self._largestAcptFrame = self._lastFrameRecvd + self._RECV_WINDOW_SIZE
         # TODO
 
@@ -216,15 +222,16 @@ class SWPReceiver:
     
     def _sendAck(self, raw):
         logging.error("MAX SEQ: %s" % self._maxSeqNum)
-        ackPack = SWPPacket(type=SWPType.ACK, seq_num=self._maxSeqNum, data=raw)
-        self._llp_endpoint.send(ackPack.to_bytes())  
+        if self._maxSeqNum != -1:
+            ackPack = SWPPacket(type=SWPType.ACK, seq_num=int(self._maxSeqNum))
+            self._llp_endpoint.send(ackPack.to_bytes())  
 
     def _add(self, data):
         self._RECV_BUFF_LOCK.acquire()
         self._recvBuff[data.seq_num % self._RECV_WINDOW_SIZE] = data
 
     def _computeMaxSeqNum(self, seqNum):
-        #with self._RECV_BUFF_LOCK:
+        #with self._RECV_BUFF_LOCK:i
         for i in range(self._lastFrameRecvd + 1, self._largestAcptFrame + 1):
             # Traverse the buffer and look for holes
             if self._recvBuff[i % self._RECV_WINDOW_SIZE] is None:
@@ -232,9 +239,10 @@ class SWPReceiver:
                 self._maxSeqNum = i - 1
                 break
             else:
-                self._ready_data.put(self._recvBuff[i % self._RECV_WINDOW_SIZE].to_bytes())
+                self._ready_data.put(self._recvBuff[i % self._RECV_WINDOW_SIZE].data)
                 self._recvBuff[i % self._RECV_WINDOW_SIZE] = None
-            #self._maxSeqNum = newMax      
+            #self._maxSeqNum = newMax 
+        logging.debug("Recv Buff: %s" % self._recvBuff)
         self._RECV_BUFF_LOCK.release()
         logging.debug("New Max Sequence Number: %s" % self._maxSeqNum)
         return self._maxSeqNum

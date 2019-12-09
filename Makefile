@@ -3,7 +3,7 @@
 PY := "python3"		# Pretty sure we want python3 (because python2.7 is dumb)
 PORT := 7777
 HOST := "localhost"
-LOSS := 0.00
+LOSS := 0.0
 
 .PHONY: testPy clientServer cleanUp
 
@@ -17,7 +17,7 @@ clientServer:
 	cat fc/swp.py | $(PY) fc/client.py -p $(PORT) -h $(HOST) -l $(LOSS)
 
 client:
-	cat fc/swp.py | $(PY) fc/client.py -p $(PORT) -h $(HOST) -l $(LOSS)
+	cat src/edu/wisc/cs/sdn/simpledns/SimpleDNS.java | $(PY) fc/client.py -p $(PORT) -h $(HOST) -l $(LOSS)
 
 server:
 	$(PY) fc/server.py -p $(PORT) -l $(LOSS) 1> output.txt
