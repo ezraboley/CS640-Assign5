@@ -163,10 +163,7 @@ class SWPSender:
            #     self._lastAckRecv = packet.seq_num
             # TODO - FIXME, need to cancel a timer, also need to know which byte
             # to resend
-                try:
-                    self._WINDOW_LOCK.release()
-                except ValueError:
-                    logging.error("Window is oversized")
+                self._WINDOW_LOCK.release()
         return
 
 class SWPReceiver:
