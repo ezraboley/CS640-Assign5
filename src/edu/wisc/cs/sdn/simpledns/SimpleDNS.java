@@ -157,8 +157,22 @@ public class SimpleDNS {
         DNS lookedUpDns = queryDNSServer(originalQuestion, svrIp, dnsResolutionSocket, dnsPort, dns);
         // end when there are no more authorities
         if (lookedUpDns.getAnswers().size() != 0) {
-            if (q_type == DNS.TYPE_A || q_type == DNS.TYPE_AAAA)
-                resolveCNAMEs(originalQuestion, lookedUpDns, svrIp, dnsResolutionSocket, dnsPort, dns, q_type, ec2Map, serverArgs);
+            if (q_type == DNS.TYPE_A || q_type == DNS.TYPE_AAAA) {
+                List<DNSResourceRecord> crecords = resolveCNAMEs(originalQuestion, lookedUpDns, svrIp, dnsResolutionSocket, dnsPort, dns, q_type, ec2Map, serverArgs);
+                for (DNSResourceRecord rr : crecords) {
+                    // FIXME I just drop additional records whenever I resolve a cname. Im not sure the right thing to do
+                    // FIXME but im guessing it isn't right
+                    lookedUpDns.setAdditional(new ArrayList<DNSResourceRecord>());
+
+                    boolean dup = false;
+                    for (DNSResourceRecord ar : lookedUpDns.getAnswers()) {
+                        if (rr.getName().equals(ar.getName()))
+                            dup = true;
+                    }
+                    if (!dup)
+                        lookedUpDns.getAnswers().add(rr);
+                }
+            }
             if (q_type == DNS.TYPE_A)
                 appendEC2TextRecords(lookedUpDns, ec2Map);
             return lookedUpDns;
@@ -187,7 +201,7 @@ public class SimpleDNS {
         return null;
     }
 
-    private static void resolveCNAMEs(DNSQuestion originalQuestion, DNS lookedUpDns, String svrIp, DatagramSocket dnsResolutionSocket, int dnsPort, DNS dns, short q_type, Map<String, String> ec2File, ServerArgs serverArgs) throws IOException {
+    private static List<DNSResourceRecord> resolveCNAMEs(DNSQuestion originalQuestion, DNS lookedUpDns, String svrIp, DatagramSocket dnsResolutionSocket, int dnsPort, DNS dns, short q_type, Map<String, String> ec2File, ServerArgs serverArgs) throws IOException {
 //        then you should recursively resolve the CNAME to obtain an A or AAAA record for the CNAME
         List<DNSResourceRecord> rrResults = new ArrayList<DNSResourceRecord>();
         for (DNSResourceRecord rr : lookedUpDns.getAnswers()) {
@@ -202,9 +216,7 @@ public class SimpleDNS {
                 }
             }
         }
-        for (DNSResourceRecord ans : rrResults) {
-            lookedUpDns.getAnswers().add(ans);
-        }
+        return rrResults;
     }
 
     private static DNS queryDNSServer(final DNSQuestion originalQuestion, final String rootSvrIp, DatagramSocket socket, int dnsPort, DNS originalDns) throws IOException {
