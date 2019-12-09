@@ -4,17 +4,19 @@ import edu.wisc.cs.sdn.simpledns.packet.DNS;
 import edu.wisc.cs.sdn.simpledns.packet.DNSQuestion;
 import edu.wisc.cs.sdn.simpledns.packet.DNSResourceRecord;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
 import java.io.IOException;
 import java.net.*;
-import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.*;
 
 public class SimpleDNS {
     private static final int initPort = 8053;
 
     public static void main(String[] args) {
-        final ServerArgs serverArgs = parseArgs(args);
+        final ServerArgs serverArgs;
         try {
+            serverArgs = parseArgs(args);
             DatagramSocket socket = new DatagramSocket(initPort);
             while (true) {
                 IncomingPacketInfo incomingInfo = receiveInitPacket(socket, serverArgs);
@@ -38,7 +40,7 @@ public class SimpleDNS {
      * @param args
      * @return the wrapped parsed args
      */
-    private static ServerArgs parseArgs(String[] args) {
+    private static ServerArgs parseArgs(String[] args) throws IOException {
         if ((args.length == 4) && (args[0].equals("-r")) && (args[2].equals("-e"))) {
             return new ServerArgs(args[1], args[3]);
         } else {
@@ -52,11 +54,20 @@ public class SimpleDNS {
      */
     private static class ServerArgs {
         final String rootSvrIp;
-        final String ec2Csv;
+        final Map<String, String> ec2Csv;
 
-        ServerArgs(String rootSvrIp, String ec2Csv) {
+        ServerArgs(String rootSvrIp, String ec2Filename) throws IOException {
             this.rootSvrIp = rootSvrIp;
-            this.ec2Csv = ec2Csv;
+            this.ec2Csv = new HashMap<String, String>();
+            BufferedReader csvReader = new BufferedReader(new FileReader(ec2Filename));
+            String row;
+            while ((row = csvReader.readLine()) != null) {
+                String[] data = row.split(",");
+                if (data.length != 2)
+                    throw new RuntimeException("Improperly formed csv");
+                this.ec2Csv.put(data[0],data[1]);
+            }
+            csvReader.close();
         }
     }
 
@@ -66,7 +77,7 @@ public class SimpleDNS {
      * @throws IOException
      */
     private static IncomingPacketInfo receiveInitPacket(DatagramSocket socket, ServerArgs serverArgs) throws IOException {
-        byte[] buff = new byte[2048]; // what size should this be?
+        byte[] buff = new byte[1518]; // what size should this be?
         DatagramPacket pk = new DatagramPacket(buff, buff.length);
         System.out.println("Waiting for packet!");
         socket.receive(pk);
@@ -102,38 +113,35 @@ public class SimpleDNS {
         final int dnsPort = 53;
         DatagramSocket dnsResolutionSocket = new DatagramSocket(dnsPort);
         for (DNSQuestion q : dns.getQuestions()) {
+            short q_type;
             switch (q.getType()) {
                 case DNS.TYPE_A:
                     System.out.println("Received question with type A");
+                    q_type = DNS.TYPE_A;
                     break;
                 case DNS.TYPE_NS:
                     System.out.println("Received question with type NS");
+                    q_type = DNS.TYPE_NS;
                     break;
                 case DNS.TYPE_CNAME:
                     System.out.println("Received question with type CNAME");
+                    q_type = DNS.TYPE_CNAME;
                     break;
                 case DNS.TYPE_AAAA:
                     System.out.println("Received question with type AAAA");
+                    q_type = DNS.TYPE_AAAA;
                     break;
                 default:
                     throw new RuntimeException("Received question invalid type");
             }
-            // goals:
-            // able to correctly query one database norecursion
-//            DatagramPacket res = dns.isRecursionDesired() ?  recQueryDNSServer() : queryDNSServer();
-//            how are you issuing dns requests? are you using sockets or tcp connections or dig commands?
-            // at this
-//            q.
-//            DNS retDns = new DNS();
-//            retDns.
             try {
                 DNS retDns;
                 if (dns.isRecursionDesired()) {
                     System.out.println("Recursive search");
-                    retDns = recurQueryDNSServer(q.getName(), serverArgs.rootSvrIp, dnsResolutionSocket, dnsPort, dns);
+                    retDns = recurQueryDNSServer(q, serverArgs.rootSvrIp, dnsResolutionSocket, dnsPort, dns, q_type, serverArgs.ec2Csv, serverArgs);
                 } else {
                     System.out.println("non recursive search");
-                    retDns = queryDNSServer(q.getName(), serverArgs.rootSvrIp, dnsResolutionSocket, dnsPort, dns);
+                    retDns = queryDNSServer(q, serverArgs.rootSvrIp, dnsResolutionSocket, dnsPort, dns);
                 }
                 dnsResolutionSocket.close();
                 return retDns;
@@ -145,53 +153,78 @@ public class SimpleDNS {
         throw new RuntimeException("No questions, this shouldn't happen");
     }
 
-    private static DNS recurQueryDNSServer(String name, String svrIp, DatagramSocket dnsResolutionSocket, int dnsPort, DNS dns) throws IOException {
-        DNS lookedUpDns = queryDNSServer(name, svrIp, dnsResolutionSocket, dnsPort, dns);
-        if (lookedUpDns.getAnswers().size() > 0) {
+    private static DNS recurQueryDNSServer(DNSQuestion originalQuestion, String svrIp, DatagramSocket dnsResolutionSocket, int dnsPort, DNS dns, short q_type, Map<String, String> ec2Map, ServerArgs serverArgs) throws IOException {
+        DNS lookedUpDns = queryDNSServer(originalQuestion, svrIp, dnsResolutionSocket, dnsPort, dns);
+        // end when there are no more authorities
+        if (lookedUpDns.getAnswers().size() != 0) {
+            if (q_type == DNS.TYPE_A || q_type == DNS.TYPE_AAAA)
+                resolveCNAMEs(originalQuestion, lookedUpDns, svrIp, dnsResolutionSocket, dnsPort, dns, q_type, ec2Map, serverArgs);
+            if (q_type == DNS.TYPE_A)
+                appendEC2TextRecords(lookedUpDns, ec2Map);
             return lookedUpDns;
         } else {
-//            for (DNSResourceRecord rr : lookedUpDns.getAuthorities()) {
-//                recurQueryDNSServer(rr.getName(), svrIp, dnsResolutionSocket, dnsPort, dns);
-//            }
-            // FIXME this only looks up the first resource record
-            return recurQueryDNSServer(name, lookedUpDns.getAuthorities().iterator().next().getData().toString(), dnsResolutionSocket, dnsPort, dns);
+            for (DNSResourceRecord rr : lookedUpDns.getAuthorities()) {
+                return recurQueryDNSServer(originalQuestion, rr.getData().toString(), dnsResolutionSocket, dnsPort, dns, q_type, ec2Map, serverArgs);
+            }
+            // FIXME what to do if there is no authorities and no
+            throw new RuntimeException("No answers and no authority, what do I do");
+//            return new DNS();
         }
     }
 
-    private static DNS queryDNSServer(final String name, final String rootSvrIp, DatagramSocket socket, int dnsPort, DNS originalDns) throws IOException {
+    private static void appendEC2TextRecords(DNS lookedUpDns, Map<String, String> ec2) {
+        for (DNSResourceRecord rr : lookedUpDns.getAnswers()) {
+            String key = rr.getData().toString();
+            if (ec2.containsKey(key)) {
+                lookedUpDns.getAnswers().add(generateTextEc2RR(key, ec2.get(key)));
+            }
+        }
+    }
+
+    private static DNSResourceRecord generateTextEc2RR(String ip, String location) {
+//        DNSResourceRecord retRecord = new DNSResourceRecord();
+//        retRecord.setName();
+        return null;
+    }
+
+    private static void resolveCNAMEs(DNSQuestion originalQuestion, DNS lookedUpDns, String svrIp, DatagramSocket dnsResolutionSocket, int dnsPort, DNS dns, short q_type, Map<String, String> ec2File, ServerArgs serverArgs) throws IOException {
+//        then you should recursively resolve the CNAME to obtain an A or AAAA record for the CNAME
+        List<DNSResourceRecord> rrResults = new ArrayList<DNSResourceRecord>();
+        for (DNSResourceRecord rr : lookedUpDns.getAnswers()) {
+            if (rr.getType() == DNS.TYPE_CNAME) {
+                DNSQuestion cnameQuestion = new DNSQuestion();
+                cnameQuestion.setName(rr.getData().toString());
+                cnameQuestion.setClass(DNS.CLASS_IN);
+                cnameQuestion.setType(DNS.TYPE_A);
+                DNS result = recurQueryDNSServer(cnameQuestion, serverArgs.rootSvrIp, dnsResolutionSocket, dnsPort, dns, q_type, ec2File, serverArgs);
+                for (DNSResourceRecord ans : result.getAnswers()) {
+                    rrResults.add(ans);
+                }
+            }
+        }
+        for (DNSResourceRecord ans : rrResults) {
+            lookedUpDns.getAnswers().add(ans);
+        }
+    }
+
+    private static DNS queryDNSServer(final DNSQuestion originalQuestion, final String rootSvrIp, DatagramSocket socket, int dnsPort, DNS originalDns) throws IOException {
 //            how are you issuing dns requests? are you using sockets or tcp connections or dig commands?
-        byte[] buff = new byte[2048]; // what size should this be?
+        byte[] buff = new byte[1518]; // what size should this be?
         DatagramPacket pk = new DatagramPacket(buff, buff.length);
-//        sendDNSRequestWithTimeout(name, rootSvrIp, socket, dnsPort, originalDns);
-        sendDNSRequest(generateDNSForRequest(name, originalDns), rootSvrIp, dnsPort, socket);
+        sendDNSRequest(generateDNSForRequest(originalQuestion, originalDns), rootSvrIp, dnsPort, socket);
         System.out.println("Waiting for packet!");
         socket.receive(pk);
-//        System.out.println("Packet Received! + " + Arrays.toString(pk.getData()));
         DNS dns = DNS.deserialize(pk.getData(), pk.getLength());
         System.out.println("DNS info: " + dns);
         return dns;
     }
 
-//    private static void sendDNSRequestWithTimeout(final String name, final String svrIp, final DatagramSocket socket, final int dnsPort, final DNS originalDns) throws IOException {
-//        Thread requestThread = new Thread(new Runnable() {
-//            public void run() {
-//                try {
-////                    sendDNSRequest(generateDNSForRequest(name, originalDns), svrIp, dnsPort, socket);
-//                } catch (IOException e) {
-//                    e.printStackTrace();
-//                }
-//            }
-//        });
-//        requestThread.start();
-//        System.out.println("Thread started");
-//    }
-
-    private static DNS generateDNSForRequest(String name, DNS originalDns) {
+    private static DNS generateDNSForRequest(DNSQuestion originalQuestion, DNS originalDns) {
         DNS dns = new DNS();
         dns.setId(originalDns.getId());
         dns.setQuery(true);
         dns.setAuthenicated(true);
-        dns.setQuestions(new ArrayList<DNSQuestion>(Arrays.asList(new DNSQuestion(name, DNS.TYPE_A)))); // maybe change type
+        dns.setQuestions(new ArrayList<DNSQuestion>(Arrays.asList(originalQuestion))); // maybe change type
         dns.setAdditional(new ArrayList<DNSResourceRecord>(originalDns.getAdditional()));
         return dns;
     }
@@ -204,35 +237,4 @@ public class SimpleDNS {
         System.out.println("Sent DNS request packet");
         socket.send(packet);
     }
-
-//    private static DatagramPacket recQueryDNSServer() {
-//        // while
-//    }
 }
-
-
-//        final int queryPort = 5010;
-//        final DatagramSocket socket = new DatagramSocket(queryPort);
-//        final DatagramSocket socket socket= new DatagramSocket();
-// send request to DNS server after a timeout just for test
-//        Thread sendDNSReqAfterSleep = new Thread(new Runnable() {
-////            public void run() {
-////                    try {
-////                        Thread.sleep(1000);
-////                        sendDNSRequest();
-////                    }
-////                    catch(Exception e) {
-////                        System.err.println(e.getMessage());
-////                    }
-////            }
-
-//        });
-//        sendDNSReqAfterSleep.start();
-// listen for a response from the server. What port?
-//        DatagramSocket datagramSocket = new DatagramSocket(queryPort);
-// print results s
-
-//        final int port = 5010;
-//        DatagramSocket datagramSocket = new DatagramSocket();
-//        byte[] buffer = DNS.serializeName(name);
-//        InetAddress receiverAddress = InetAddress.getLocalHost();
