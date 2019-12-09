@@ -228,7 +228,7 @@ public class SimpleDNS {
         DNSResourceRecord rr = new DNSResourceRecord();
         rr.setName(name);
         rr.setType((short) 16);
-        rr.setTtl(300);
+        rr.setTtl(0);
         DNSRdata data = new DNSRdataString(val.location + "-" + fromIPv4Address(ip));
         rr.setData(data);
         return rr;
