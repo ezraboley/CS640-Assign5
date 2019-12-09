@@ -191,21 +191,22 @@ public class SimpleDNS {
                 try {
                     return recurQueryDNSServer(originalQuestion, rr.getData().toString(), dnsResolutionSocket, dnsPort, dns, q_type, ec2Map, serverArgs);
                 } catch (RuntimeException e) {
+                    System.out.println(e.getMessage());
                     System.out.println("NS fallback");
                     continue;
                 }
             }
-            // FIXME what to do if there is no authorities and no
             throw new RuntimeException("No answers and no authority, what do I do");
-//            return new DNS();
         }
     }
 
     private static void appendEC2TextRecords(DNS lookedUpDns, Map<Integer, Ec2Val> ec2) {
         final int IP_V4_SIZE = 32;
         List<DNSResourceRecord> oldRRs = new ArrayList<DNSResourceRecord>();
-        for (DNSResourceRecord rr : lookedUpDns.getAnswers())
-            oldRRs.add(rr);
+        for (DNSResourceRecord rr : lookedUpDns.getAnswers()) {
+            if (rr.getType() != DNS.TYPE_CNAME)
+                oldRRs.add(rr);
+        }
         for (DNSResourceRecord rr : oldRRs) {
             Integer lookForKey = toIPv4Address(rr.getData().toString());
             iterateThroughMask(lookedUpDns, ec2, IP_V4_SIZE, rr, lookForKey);
