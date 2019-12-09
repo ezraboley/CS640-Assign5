@@ -224,6 +224,8 @@ public class SimpleDNS {
         dns.setId(originalDns.getId());
         dns.setQuery(true);
         dns.setAuthenicated(true);
+        dns.setRecursionDesired(true);
+        dns.setRecursionAvailable(false);
         dns.setQuestions(new ArrayList<DNSQuestion>(Arrays.asList(originalQuestion))); // maybe change type
         dns.setAdditional(new ArrayList<DNSResourceRecord>(originalDns.getAdditional()));
         return dns;
