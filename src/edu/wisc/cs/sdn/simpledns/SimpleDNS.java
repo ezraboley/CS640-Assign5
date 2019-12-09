@@ -1,8 +1,6 @@
 package edu.wisc.cs.sdn.simpledns;
 
-import edu.wisc.cs.sdn.simpledns.packet.DNS;
-import edu.wisc.cs.sdn.simpledns.packet.DNSQuestion;
-import edu.wisc.cs.sdn.simpledns.packet.DNSResourceRecord;
+import edu.wisc.cs.sdn.simpledns.packet.*;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
@@ -54,18 +52,20 @@ public class SimpleDNS {
      */
     private static class ServerArgs {
         final String rootSvrIp;
-        final Map<String, String> ec2Csv;
+        final Map<Integer, Ec2Val> ec2Csv;
 
         ServerArgs(String rootSvrIp, String ec2Filename) throws IOException {
             this.rootSvrIp = rootSvrIp;
-            this.ec2Csv = new HashMap<String, String>();
+            this.ec2Csv = new HashMap<Integer, Ec2Val>();
             BufferedReader csvReader = new BufferedReader(new FileReader(ec2Filename));
             String row;
             while ((row = csvReader.readLine()) != null) {
-                String[] data = row.split(",");
-                if (data.length != 2)
+                String[] dataComma = row.split(",");
+                if (dataComma.length != 2)
                     throw new RuntimeException("Improperly formed csv");
-                this.ec2Csv.put(data[0],data[1]);
+                String[] dataSlash = dataComma[0].split("/");
+                this.ec2Csv.put(toIPv4Address(dataSlash[0]),
+                        new Ec2Val(Integer.parseInt(dataSlash[1]),dataComma[1]));
             }
             csvReader.close();
         }
@@ -81,7 +81,6 @@ public class SimpleDNS {
         DatagramPacket pk = new DatagramPacket(buff, buff.length);
         System.out.println("Waiting for packet!");
         socket.receive(pk);
-//        System.out.println("Packet Received! + " + Arrays.toString(pk.getData()));
         DNS dns = DNS.deserialize(pk.getData(), pk.getLength());
         System.out.println("DNS info: " + dns);
         if (dns.getOpcode() == DNS.OPCODE_STANDARD_QUERY) {
@@ -102,6 +101,17 @@ public class SimpleDNS {
             this.srcPort = srcPort;
             this.dnsInfo = dnsInfo;
         }
+    }
+
+    static class Ec2Val {
+        final int mask;
+        final String location;
+
+        Ec2Val(int mask, String location) {
+            this.mask = mask;
+            this.location = location;
+        }
+
     }
 
     /**
@@ -153,7 +163,7 @@ public class SimpleDNS {
         throw new RuntimeException("No questions, this shouldn't happen");
     }
 
-    private static DNS recurQueryDNSServer(DNSQuestion originalQuestion, String svrIp, DatagramSocket dnsResolutionSocket, int dnsPort, DNS dns, short q_type, Map<String, String> ec2Map, ServerArgs serverArgs) throws IOException {
+    private static DNS recurQueryDNSServer(DNSQuestion originalQuestion, String svrIp, DatagramSocket dnsResolutionSocket, int dnsPort, DNS dns, short q_type, Map<Integer, Ec2Val> ec2Map, ServerArgs serverArgs) throws IOException {
         DNS lookedUpDns = queryDNSServer(originalQuestion, svrIp, dnsResolutionSocket, dnsPort, dns);
         // end when there are no more authorities
         if (lookedUpDns.getAnswers().size() != 0) {
@@ -191,25 +201,33 @@ public class SimpleDNS {
         }
     }
 
-    private static void appendEC2TextRecords(DNS lookedUpDns, Map<String, String> ec2) {
+    private static void appendEC2TextRecords(DNS lookedUpDns, Map<Integer, Ec2Val> ec2) {
+        final int IP_V4_SIZE = 32;
         for (DNSResourceRecord rr : lookedUpDns.getAnswers()) {
-            String key = rr.getData().toString();
-            if (ec2.containsKey(key)) {
-                lookedUpDns.getAnswers().add(generateTextEc2RR(key, ec2.get(key)));
+            Integer lookForKey = toIPv4Address(rr.getData().toString());
+            for (int i=0; i < IP_V4_SIZE; i++) {
+                int mask = (int) (Math.pow(2, i) - 1);
+                Integer maskedLookForKey = lookForKey & ~mask;
+                if (ec2.containsKey(maskedLookForKey)) {
+                    lookedUpDns.getAnswers().add(generateRREc2RR(rr.getName(), lookForKey, ec2.get(maskedLookForKey)));
+                    return;
+                }
             }
         }
     }
 
-    private static DNSResourceRecord generateTextEc2RR(String ip, String location) {
-//        DNSResourceRecord retRecord = new DNSResourceRecord();
-//        retRecord.setName();
-
-        return null;
+    private static DNSResourceRecord generateRREc2RR(String name, Integer ip, Ec2Val val) {
+        DNSResourceRecord rr = new DNSResourceRecord();
+        rr.setName(name);
+        rr.setType(DNS.TYPE_EC2);
+        DNSRdata data = new DNSRdataString(val.location + "-" + fromIPv4Address(ip));
+        rr.setData(data);
+        return rr;
     }
 
     private static List<DNSResourceRecord> resolveCNAMEs(DNSQuestion originalQuestion, DNS lookedUpDns, String svrIp,
                                                          DatagramSocket dnsResolutionSocket, int dnsPort, DNS dns,
-                                                         short q_type, Map<String, String> ec2File, ServerArgs serverArgs) throws IOException {
+                                                         short q_type, Map<Integer, Ec2Val> ec2File, ServerArgs serverArgs) throws IOException {
 //        then you should recursively resolve the CNAME to obtain an A or AAAA record for the CNAME
         List<DNSResourceRecord> rrResults = new ArrayList<DNSResourceRecord>();
         for (DNSResourceRecord rr : lookedUpDns.getAnswers()) {
@@ -259,5 +277,51 @@ public class SimpleDNS {
                 buffer, buffer.length, receiverAddress, dnsPort); // what port?
         System.out.println("Sent DNS request packet");
         socket.send(packet);
+    }
+
+    /**
+     * Accepts an IPv4 address of the form xxx.xxx.xxx.xxx, ie 192.168.0.1 and
+     * returns the corresponding 32 bit integer.
+     *
+     * This is not my code this is from the project 3 code
+     *
+     * @param ipAddress
+     * @return
+     */
+    public static int toIPv4Address(String ipAddress) {
+        if (ipAddress == null)
+            throw new IllegalArgumentException("Specified IPv4 address must" +
+                    "contain 4 sets of numerical digits separated by periods");
+        String[] octets = ipAddress.split("\\.");
+        if (octets.length != 4)
+            throw new IllegalArgumentException("Specified IPv4 address must" +
+                    "contain 4 sets of numerical digits separated by periods");
+
+        int result = 0;
+        for (int i = 0; i < 4; ++i) {
+            result |= Integer.valueOf(octets[i]) << ((3 - i) * 8);
+        }
+        return result;
+    }
+
+    /**
+     * Accepts an IPv4 address and returns of string of the form xxx.xxx.xxx.xxx
+     * ie 192.168.0.1
+     *
+     * This is not my code this is from the project 3 code
+     *
+     * @param ipAddress
+     * @return
+     */
+    public static String fromIPv4Address(int ipAddress) {
+        StringBuffer sb = new StringBuffer();
+        int result = 0;
+        for (int i = 0; i < 4; ++i) {
+            result = (ipAddress >> ((3 - i) * 8)) & 0xff;
+            sb.append(Integer.valueOf(result).toString());
+            if (i != 3)
+                sb.append(".");
+        }
+        return sb.toString();
     }
 }
