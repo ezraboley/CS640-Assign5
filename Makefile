@@ -9,6 +9,15 @@ LOSS := 0.00
 
 # This will first attempt to cleanup a previous run, and then run the test
 # server/client.
+build:
+	javac -d ./ src/edu/wisc/cs/sdn/simpledns/SimpleDNS.java src/edu/wisc/cs/sdn/simpledns/packet/*.java
+
+run:
+	java edu/wisc/cs/sdn/simpledns/SimpleDNS -r l.root-servers.net -e ec2.csv
+
+clean:
+	rm -r edu
+
 testPy: cleanUp clientServer
 
 clientServer:
