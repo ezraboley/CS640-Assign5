@@ -203,15 +203,22 @@ public class SimpleDNS {
 
     private static void appendEC2TextRecords(DNS lookedUpDns, Map<Integer, Ec2Val> ec2) {
         final int IP_V4_SIZE = 32;
-        for (DNSResourceRecord rr : lookedUpDns.getAnswers()) {
+        List<DNSResourceRecord> oldRRs = new ArrayList<DNSResourceRecord>();
+        for (DNSResourceRecord rr : lookedUpDns.getAnswers())
+            oldRRs.add(rr);
+        for (DNSResourceRecord rr : oldRRs) {
             Integer lookForKey = toIPv4Address(rr.getData().toString());
-            for (int i=0; i < IP_V4_SIZE; i++) {
-                int mask = (int) (Math.pow(2, i) - 1);
-                Integer maskedLookForKey = lookForKey & ~mask;
-                if (ec2.containsKey(maskedLookForKey)) {
-                    lookedUpDns.getAnswers().add(generateRREc2RR(rr.getName(), lookForKey, ec2.get(maskedLookForKey)));
-                    return;
-                }
+            iterateThroughMask(lookedUpDns, ec2, IP_V4_SIZE, rr, lookForKey);
+        }
+    }
+
+    private static void iterateThroughMask(DNS lookedUpDns, Map<Integer, Ec2Val> ec2, int IP_V4_SIZE, DNSResourceRecord rr, Integer lookForKey) {
+        for (int i=0; i < IP_V4_SIZE; i++) {
+            int mask = (int) (Math.pow(2, i) - 1);
+            Integer maskedLookForKey = lookForKey & ~mask;
+            if (ec2.containsKey(maskedLookForKey)) {
+                lookedUpDns.getAnswers().add(generateRREc2RR(rr.getName(), lookForKey, ec2.get(maskedLookForKey)));
+                return;
             }
         }
     }
@@ -219,7 +226,8 @@ public class SimpleDNS {
     private static DNSResourceRecord generateRREc2RR(String name, Integer ip, Ec2Val val) {
         DNSResourceRecord rr = new DNSResourceRecord();
         rr.setName(name);
-        rr.setType(DNS.TYPE_EC2);
+        rr.setType((short) 16);
+        rr.setTtl(300);
         DNSRdata data = new DNSRdataString(val.location + "-" + fromIPv4Address(ip));
         rr.setData(data);
         return rr;
